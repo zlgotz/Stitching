@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# Stitch project outputs
+capture/
+output/
+*.jpg
+*.png
+*.tif
+*.bmp
+
+# OS junk
+.DS_Store
+Thumbs.db
