@@ -1,0 +1,149 @@
+#include <AccelStepper.h> 
+
+//pins for x axis 
+#define X_DIR_PIN 2         // Direction pin for the X-axis motor driver
+#define X_STEP_PIN 3        // Step pin for the X-axis motor driver
+#define X_HOME_PIN 6        // Limit switch pin for X-axis homing
+
+//pins for z axis (both drivers are connected to these two pins)
+#define Z_DIR_PIN 4         // Direction pin for BOTH Z-axis motor drivers
+#define Z_STEP_PIN 5        // Step pin for BOTH Z-axis motor drivers
+#define Z_HOME_PIN 7        // Limit switch pin for Z-axis homing
+
+// Mechanical Constants & Configuration
+
+//motor steps per unit (need to change later)
+//just an example but 200 = 1 inch rn
+const long X_STEPS_PER_UNIT = 200; 
+const long Z_STEPS_PER_UNIT = 200;  
+
+// movement parameters (S stops per row, R rows total)
+//need to change later
+const int S_STOPS_PER_ROW = 5; 
+const int R_TOTAL_ROWS = 4;
+
+//total steps needed for each movement increment
+const long X_DISTANCE_PER_STOP = X_STEPS_PER_UNIT * 10; // move 10mm per stop
+const long Z_DISTANCE_PER_ROW = Z_STEPS_PER_UNIT * 10;  // move 10mm per row
+
+// Initialize AccelStepper library for the X-axis (using the driver interface 1: STEP/DIR)
+AccelStepper stepperX(AccelStepper::DRIVER, X_STEP_PIN, X_DIR_PIN);
+
+// For the Z-axis, we use a single AccelStepper instance because both motors 
+// move identically using the same physical pins on the Arduino Uno.
+AccelStepper stepperZ(AccelStepper::DRIVER, Z_STEP_PIN, Z_DIR_PIN); 
+
+void setup() {
+  Serial.begin(9600); // Start serial communication for debugging
+  
+  // Configure limit switch pins as inputs with internal pull-up resistors.
+  // switches are Normally Closed (NC) and connected to GND.
+  pinMode(X_HOME_PIN, INPUT_PULLUP); 
+  pinMode(Z_HOME_PIN, INPUT_PULLUP);
+
+  // Set max speeds and acceleration for smooth movement.
+  // Values are in "steps per second" and "steps per second squared".
+  stepperX.setMaxSpeed(1000); 
+  stepperX.setAcceleration(500);
+  stepperZ.setMaxSpeed(1000);
+  stepperZ.setAcceleration(500);
+
+ //homes to center for reference picture
+  homeToCenter(); 
+}
+
+void loop() {
+  runScanPattern(); // Execute the scanning sequence
+  delay(60000); // Wait for 60 seconds after a full cycle before repeating
+}
+
+// Moves a motor to a specific target position and blocks the program until the movement is complete.
+void moveAndWait(AccelStepper& motor, long targetPosition) {
+  motor.moveTo(targetPosition);
+  while (motor.distanceToGo() != 0) {
+    motor.run(); // This function handles acceleration and stepping
+  }
+}
+
+//Homing sequence: moves back until limit switches are hit, then moves to a predefined central starting point.
+
+void homeToCenter() {
+  // Set speeds to move toward the home switches (adjust direction if needed)
+  stepperX.setSpeed(-200); 
+  stepperZ.setSpeed(-200); 
+
+  // Continue moving until both switches are triggered (pin reads LOW)
+  while (digitalRead(X_HOME_PIN) == HIGH || digitalRead(Z_HOME_PIN) == HIGH) {
+    if (digitalRead(X_HOME_PIN) == HIGH) {
+      stepperX.runSpeed(); // Keep moving X
+    }
+    if (digitalRead(Z_HOME_PIN) == HIGH) {
+      stepperZ.runSpeed(); // Keep moving Z
+    }
+    // Note: If you have a single limit switch for Z, this works fine.
+  }
+
+  // Once home, set the current position to zero steps
+  stepperX.setCurrentPosition(0);
+  stepperZ.setCurrentPosition(0);
+  
+  // Move to a central 'start' position (adjust these values based on your physical range)
+  long center_x_pos = X_STEPS_PER_UNIT * 50; // 50mm from the homed edge
+  long center_z_pos = Z_STEPS_PER_UNIT * 50; // 50mm from the homed edge
+
+  moveAndWait(stepperX, center_x_pos);
+  moveAndWait(stepperZ, center_z_pos);
+  
+  // Re-zero at this central 'start' position, which becomes the origin (0, 0) for the grid scan.
+  stepperX.setCurrentPosition(0);
+  stepperZ.setCurrentPosition(0);
+}
+
+//scans right to left then moves down a row and scans again
+void runScanPattern() {
+  long currentX = 0;
+  long currentZ = 0;
+  
+  // Define the 'far right' and 'far left' positions relative to the zeroed center
+  // This calculates half the total width to define the outer boundary positions.
+  long farRightPos = (S_STOPS_PER_ROW / 2) * X_DISTANCE_PER_STOP; 
+
+  for (int row = 0; row < R_TOTAL_ROWS; row++) {
+    
+    // --- Z-AXIS MOVEMENT ---
+    // Move the Z-axis down to the next row position
+    currentZ += Z_DISTANCE_PER_ROW; // Increment Z position
+    moveAndWait(stepperZ, currentZ);
+
+    // --- X-AXIS PREPARATION ---
+    // checks out the "far right" 
+    currentX = farRightPos;
+    moveAndWait(stepperX, currentX);
+    
+    // *** Camera Action at the very start of the row (Top Right) ***
+    //Serial.print("Snapshot taken at start of row (X:");
+    //Serial.print(currentX); Serial.print(", Z:"); Serial.println(currentZ);
+    
+    delay(1000); // Wait for camera to take picture
+
+
+    // --- X-AXIS SCANNING (Right-to-Left) ---
+    // 3. Scan from Right-to-Left for the remaining S-1 stops
+    // Loop starts at stop 1 because stop 0 was the initial snapshot.
+    for (int stop = 1; stop < S_STOPS_PER_ROW; stop++) {
+      // Move left (negative X direction) one step increment
+      currentX -= X_DISTANCE_PER_STOP; 
+      moveAndWait(stepperX, currentX);
+      
+      // *** Camera Action Here ***
+      //Serial.print("Snapshot taken at X:");
+      //Serial.print(currentX);
+      //Serial.print(", Z:");
+      //Serial.println(currentZ);
+      delay(1000); // Wait for camera action
+    }
+    
+    // The loop iteration naturally handles moving the Z down for the next row, 
+    // and the code inside the loop moves X back to the far right start position again.
+  }
+}
